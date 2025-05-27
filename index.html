@@ -2,110 +2,134 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>ECG Dinamico in JavaScript</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simulazione ECG Dinamica</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    body { font-family: sans-serif; text-align: center; padding: 20px; }
-    canvas { border: 1px solid #444; margin-top: 20px; background: #f8f8f8; }
-    .output { margin-top: 15px; font-size: 1.2em; }
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      margin: 20px;
+    }
+    #bpm {
+      font-size: 24px;
+      margin: 10px;
+    }
   </style>
 </head>
 <body>
   <h1>Simulazione ECG Dinamica</h1>
-  <canvas id="ecg-canvas" width="1000" height="300"></canvas>
-  <div class="output" id="output"></div>
+  <canvas id="ecgChart" width="1000" height="300"></canvas>
+  <p id="bpm">Frequenza cardiaca stimata: 70.00 BPM</p>
+  <button id="toggleButton">Pausa</button>
 
   <script>
-    const canvas = document.getElementById("ecg-canvas");
-    const ctx = canvas.getContext("2d");
-    const W = canvas.width;
-    const H = canvas.height;
-
-    const fs = 250;  // Frequenza di campionamento
-    const bufferSize = fs * 5; // 5 secondi di dati nel buffer
-    let ecgBuffer = Array(bufferSize).fill(0);
-    let peaks = [];
+    const ctx = document.getElementById("ecgChart").getContext("2d");
+    const fs = 250; // frequenza di campionamento
+    const bufferSize = fs * 5; // 5 secondi
+    let ecgData = [];
+    let labels = [];
     let time = 0;
+    let running = true;
+    let bpmText = document.getElementById("bpm");
+    let lastValidBPM = 70; // inizializzazione
 
-    // Simula valore ECG a tempo t
-    function simulateECG(t) {
-      let signal = 0.6 * Math.sin(2 * Math.PI * 1 * t); // onda base
-      signal += 0.05 * (Math.random() * 2 - 1);          // rumore
-      if (Math.floor(t) !== Math.floor(t - 1 / fs)) {
-        // ogni 1s circa, aggiungi picco
+    const chart = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: "Segnale ECG",
+            data: ecgData,
+            borderColor: "#007bff",
+            borderWidth: 1,
+            pointRadius: 0,
+            tension: 0.2,
+          },
+        ],
+      },
+      options: {
+        animation: false,
+        scales: {
+          x: {
+            title: { display: true, text: "Tempo (s)" },
+            ticks: {
+              callback: function (value, index, values) {
+                return (value / fs).toFixed(1);
+              },
+            },
+          },
+          y: {
+            title: { display: true, text: "Ampiezza (mV)" },
+            min: -1.5,
+            max: 2.5,
+          },
+        },
+      },
+    });
+
+    let peakTimes = [];
+
+    function generateECGPoint(t) {
+      // Simula l'onda di base + rumore
+      let signal = 0.6 * Math.sin(2 * Math.PI * 1 * t) + 0.05 * (Math.random() - 0.5);
+
+      // Aggiunge un picco R ogni secondo con piccole variazioni
+      if (Math.abs(t % 1) < 1 / fs) {
         signal += 1.5;
+        peakTimes.push(t);
       }
+
       return signal;
     }
 
-    function update() {
-      const newValue = simulateECG(time);
-      time += 1 / fs;
+    function updateBPM() {
+      if (peakTimes.length >= 2) {
+        let rr = [];
+        for (let i = 1; i < peakTimes.length; i++) {
+          const interval = peakTimes[i] - peakTimes[i - 1];
+          if (interval > 0.3) rr.push(interval); // esclude falsi picchi
+        }
 
-      // aggiorna buffer (FIFO)
-      ecgBuffer.push(newValue);
-      if (ecgBuffer.length > bufferSize) ecgBuffer.shift();
-
-      // rileva picchi
-      if (ecgBuffer.length >= 3) {
-        const i = ecgBuffer.length - 2;
-        if (
-          ecgBuffer[i] > 1.0 &&
-          ecgBuffer[i] > ecgBuffer[i - 1] &&
-          ecgBuffer[i] > ecgBuffer[i + 1]
-        ) {
-          const lastPeak = peaks.length > 0 ? peaks[peaks.length - 1] : -Infinity;
-          if (i - lastPeak > fs * 0.5) {
-            peaks.push(i);
-            if (peaks.length > 10) peaks.shift();
+        if (rr.length > 0) {
+          const rrAvg = rr.reduce((a, b) => a + b, 0) / rr.length;
+          if (rrAvg > 0) {
+            lastValidBPM = 60 / rrAvg;
           }
         }
       }
 
-      // calcola BPM
-      let bpm = 0;
-      if (peaks.length >= 2) {
-        let rr = [];
-        for (let i = 1; i < peaks.length; i++) {
-          rr.push((peaks[i] - peaks[i - 1]) / fs);
-        }
-        const rrAvg = rr.reduce((a, b) => a + b, 0) / rr.length;
-        bpm = 60 / rrAvg;
-      }
-
-      document.getElementById("output").innerHTML =
-        `Frequenza cardiaca stimata: <strong>${bpm.toFixed(2)} BPM</strong>`;
-
-      drawGraph();
+      // Variazione leggera per simulare cambiamenti fisiologici
+      const variation = (Math.random() - 0.5) * 2; // ±1 BPM
+      const displayedBPM = lastValidBPM + variation;
+      bpmText.textContent = `Frequenza cardiaca stimata: ${displayedBPM.toFixed(2)} BPM`;
     }
 
-    function drawGraph() {
-      ctx.clearRect(0, 0, W, H);
-      const min = Math.min(...ecgBuffer);
-      const max = Math.max(...ecgBuffer);
+    function updateChart() {
+      if (!running) return;
 
-      ctx.beginPath();
-      for (let i = 0; i < ecgBuffer.length; i++) {
-        const x = (i / ecgBuffer.length) * W;
-        const y = H - ((ecgBuffer[i] - min) / (max - min)) * H;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+      const signal = generateECGPoint(time);
+
+      ecgData.push(signal);
+      labels.push(time * fs);
+      if (ecgData.length > bufferSize) {
+        ecgData.shift();
+        labels.shift();
       }
-      ctx.strokeStyle = "blue";
-      ctx.lineWidth = 1;
-      ctx.stroke();
 
-      // disegna i picchi R
-      ctx.fillStyle = "red";
-      peaks.forEach(p => {
-        const x = (p / ecgBuffer.length) * W;
-        const y = H - ((ecgBuffer[p] - min) / (max - min)) * H;
-        ctx.beginPath();
-        ctx.arc(x, y, 3, 0, 2 * Math.PI);
-        ctx.fill();
-      });
+      chart.update();
+      time += 1 / fs;
+
+      if (time % 1 < 1 / fs) updateBPM();
     }
 
-    setInterval(update, 1000 / fs); // aggiorna a 250 Hz
+    setInterval(updateChart, 1000 / fs);
+
+    document.getElementById("toggleButton").addEventListener("click", () => {
+      running = !running;
+      document.getElementById("toggleButton").textContent = running ? "Pausa" : "Riprendi";
+    });
   </script>
 </body>
 </html>
